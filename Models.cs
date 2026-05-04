@@ -104,6 +104,7 @@ namespace B4JScanner
         public string Id { get; set; }
         public string Summary { get; set; }
         public string Severity { get; set; }
+        public string FixedVersion { get; set; }
         public List<string> Aliases { get; set; }
 
         public OsvVuln()
