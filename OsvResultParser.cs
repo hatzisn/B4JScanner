@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
@@ -53,6 +54,8 @@ namespace B4JScanner
                             if (dbSpec != null)
                                 ov.Severity = Get(dbSpec, "severity") as string;
 
+                            ov.FixedVersion = ExtractFixedVersion(v);
+
                             pr.Vulns.Add(ov);
                         }
 
@@ -70,6 +73,36 @@ namespace B4JScanner
         {
             object v;
             return d != null && d.TryGetValue(key, out v) ? v : null;
+        }
+
+        static string ExtractFixedVersion(Dictionary<string, object> vuln)
+        {
+            foreach (var affectedItem in Seq(vuln, "affected"))
+            {
+                var affected = affectedItem as Dictionary<string, object>;
+                if (affected == null) continue;
+
+                foreach (var rangeItem in Seq(affected, "ranges"))
+                {
+                    var range = rangeItem as Dictionary<string, object>;
+                    if (range == null) continue;
+
+                    // Only look at ECOSYSTEM ranges — these carry the package version
+                    string rangeType = Get(range, "type") as string;
+                    if (!string.Equals(rangeType, "ECOSYSTEM", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    foreach (var eventItem in Seq(range, "events"))
+                    {
+                        var ev = eventItem as Dictionary<string, object>;
+                        if (ev == null) continue;
+                        string fixed_ = Get(ev, "fixed") as string;
+                        if (!string.IsNullOrEmpty(fixed_))
+                            return fixed_;
+                    }
+                }
+            }
+            return null;
         }
 
         // Handles both object[] and ArrayList (JavaScriptSerializer can return either)
