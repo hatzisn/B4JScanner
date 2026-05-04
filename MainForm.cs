@@ -12,10 +12,14 @@ namespace B4JScanner
     class MainForm : Form
     {
         TextBox txtProject, txtLibs, txtAddLibs;
-        Button btnScan, btnOpenSbom, btnOsvScan;
+        Button btnScan, btnOpenSbom, btnOpenReport, btnOsvScan;
         RichTextBox txtLog;
         ToolStripStatusLabel statusLabel;
         string _lastSbomPath;
+        string _lastHtmlPath;
+        B4JProject _lastProject;
+        List<ResolvedLibrary> _lastResolved;
+        List<JavaSourceFile> _lastJavaFiles;
         AppConfig _config;
 
         public MainForm()
@@ -91,15 +95,8 @@ namespace B4JScanner
             // --- Button strip ---
             btnScan = new Button
             {
-                Text = "Scan",
-                Width = 90, Height = 28,
-                Margin = new Padding(0, 0, 8, 0)
-            };
-            btnOpenSbom = new Button
-            {
-                Text = "Open SBOM",
-                Width = 110, Height = 28,
-                Enabled = false,
+                Text = "Dependency Scan",
+                Width = 130, Height = 28,
                 Margin = new Padding(0, 0, 8, 0)
             };
             btnOsvScan = new Button
@@ -107,11 +104,26 @@ namespace B4JScanner
                 Text = "OSV Scan",
                 Width = 95, Height = 28,
                 Enabled = false,
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            btnOpenReport = new Button
+            {
+                Text = "Open Report",
+                Width = 105, Height = 28,
+                Enabled = false,
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            btnOpenSbom = new Button
+            {
+                Text = "Open SBOM",
+                Width = 100, Height = 28,
+                Enabled = false,
                 Margin = new Padding(0)
             };
-            btnScan.Click     += OnScan;
-            btnOpenSbom.Click += OnOpenSbom;
-            btnOsvScan.Click  += OnOsvScan;
+            btnScan.Click       += OnScan;
+            btnOpenSbom.Click   += OnOpenSbom;
+            btnOpenReport.Click += OnOpenReport;
+            btnOsvScan.Click    += OnOsvScan;
 
             var btnFlow = new FlowLayoutPanel
             {
@@ -121,8 +133,9 @@ namespace B4JScanner
                 Padding = new Padding(10, 6, 10, 4)
             };
             btnFlow.Controls.Add(btnScan);
-            btnFlow.Controls.Add(btnOpenSbom);
             btnFlow.Controls.Add(btnOsvScan);
+            btnFlow.Controls.Add(btnOpenReport);
+            btnFlow.Controls.Add(btnOpenSbom);
 
             // --- Log area ---
             txtLog = new RichTextBox
@@ -214,11 +227,14 @@ namespace B4JScanner
             }
 
             txtLog.Clear();
-            btnScan.Enabled     = false;
-            btnOpenSbom.Enabled = false;
-            btnOsvScan.Enabled  = false;
-            _lastSbomPath       = null;
-            statusLabel.Text    = "Scanning...";
+            btnScan.Enabled       = false;
+            btnOpenSbom.Enabled   = false;
+            btnOpenReport.Enabled = false;
+            btnOsvScan.Enabled    = false;
+            _lastSbomPath         = null;
+            _lastHtmlPath         = null;
+            _lastProject          = null;
+            statusLabel.Text      = "Scanning...";
             Application.DoEvents();
 
             SaveConfig();
@@ -302,9 +318,18 @@ namespace B4JScanner
                 MdWriter.Write(project, resolved, javaFiles, mdPath);
                 Log("  " + mdPath);
 
-                _lastSbomPath       = outputPath;
-                btnOpenSbom.Enabled = true;
-                btnOsvScan.Enabled  = true;
+                string htmlPath = Path.ChangeExtension(outputPath, ".html");
+                HtmlWriter.Write(project, resolved, javaFiles, htmlPath);
+                Log("  " + htmlPath);
+
+                _lastSbomPath         = outputPath;
+                _lastHtmlPath         = htmlPath;
+                _lastProject          = project;
+                _lastResolved         = resolved;
+                _lastJavaFiles        = javaFiles;
+                btnOpenSbom.Enabled   = true;
+                btnOpenReport.Enabled = true;
+                btnOsvScan.Enabled    = true;
 
                 Log("");
                 string summary = "Libraries: " + found + " found, " + notFound + " not found.";
@@ -336,6 +361,19 @@ namespace B4JScanner
             }
         }
 
+        void OnOpenReport(object sender, EventArgs e)
+        {
+            if (_lastHtmlPath != null && File.Exists(_lastHtmlPath))
+            {
+                try { Process.Start(_lastHtmlPath); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not open file:\n" + ex.Message, "B4JScanner",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
         async void OnOsvScan(object sender, EventArgs e)
         {
             if (_lastSbomPath == null || !File.Exists(_lastSbomPath)) return;
@@ -347,11 +385,41 @@ namespace B4JScanner
             Application.DoEvents();
 
             string sbomPath = _lastSbomPath;
-            string output   = await Task.Run(() => RunOsvScanner(sbomPath));
+            var result = await Task.Run(() => RunOsvScanner(sbomPath));
 
-            Log(output);
+            if (!string.IsNullOrEmpty(result.ErrorText))
+                Log(result.ErrorText);
+
+            if (result.Packages.Count > 0)
+            {
+                int total = 0;
+                foreach (var p in result.Packages) total += p.Vulns.Count;
+                Log(total + " vulnerabilities found across " + result.Packages.Count + " package(s):");
+                foreach (var p in result.Packages)
+                {
+                    Log("  " + p.PackageName + " " + (p.Version ?? "") + "  (" + p.Vulns.Count + " vulns)");
+                    foreach (var v in p.Vulns)
+                        Log("    " + (v.Id ?? "?").PadRight(20)
+                            + " [" + (v.Severity ?? "?") + "]"
+                            + (v.Summary != null ? "  " + v.Summary : ""));
+                }
+            }
+            else if (string.IsNullOrEmpty(result.ErrorText))
+            {
+                Log("No vulnerabilities found.");
+            }
+
+            if (_lastProject != null && _lastHtmlPath != null)
+            {
+                HtmlWriter.Write(_lastProject, _lastResolved, _lastJavaFiles,
+                    _lastHtmlPath, result.Packages);
+                Log("HTML report updated: " + _lastHtmlPath);
+            }
+
             Log("--- OSV scan complete ---");
-            statusLabel.Text   = "OSV scan complete.";
+            statusLabel.Text   = result.Packages.Count > 0
+                ? "OSV scan complete. Vulnerabilities found."
+                : "OSV scan complete. No vulnerabilities found.";
             btnOsvScan.Enabled = true;
         }
 
@@ -362,17 +430,18 @@ namespace B4JScanner
             string[] matches = Directory.GetFiles(appDir, "osv-scanner*");
             if (matches.Length > 0)
                 return matches[0];
-            return "osv-scanner"; // fall back to PATH
+            return "osv-scanner";
         }
 
-        static string RunOsvScanner(string sbomPath)
+        static OsvScanOutput RunOsvScanner(string sbomPath)
         {
+            var output = new OsvScanOutput();
             try
             {
                 var psi = new ProcessStartInfo
                 {
                     FileName               = FindOsvScanner(),
-                    Arguments              = "-L \"" + sbomPath + "\"",
+                    Arguments              = "--format json -L \"" + sbomPath + "\"",
                     UseShellExecute        = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError  = true,
@@ -385,23 +454,34 @@ namespace B4JScanner
                     string stderr = proc.StandardError.ReadToEnd();
                     proc.WaitForExit();
 
-                    string combined = stdout;
-                    if (!string.IsNullOrWhiteSpace(stderr))
-                        combined += (combined.Length > 0 ? "\n" : "") + stderr;
-
-                    return string.IsNullOrWhiteSpace(combined) ? "(no output)" : combined.TrimEnd();
+                    string trimmed = stdout == null ? "" : stdout.Trim();
+                    if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
+                    {
+                        output.Packages = OsvResultParser.Parse(trimmed);
+                        if (!string.IsNullOrWhiteSpace(stderr))
+                            output.ErrorText = stderr.TrimEnd();
+                    }
+                    else
+                    {
+                        string combined = stdout;
+                        if (!string.IsNullOrWhiteSpace(stderr))
+                            combined += (combined.Length > 0 ? "\n" : "") + stderr;
+                        output.ErrorText = string.IsNullOrWhiteSpace(combined)
+                            ? "(no output)" : combined.TrimEnd();
+                    }
                 }
             }
             catch (Win32Exception)
             {
-                return "osv-scanner not found.\n\n"
-                     + "Either add osv-scanner.exe to your PATH or place it in the same folder as B4JScanner.exe.\n"
-                     + "Download from: https://github.com/google/osv-scanner/releases";
+                output.ErrorText = "osv-scanner not found.\n\n"
+                    + "Place osv-scanner.exe in the same folder as B4JScanner.exe or add it to your PATH.\n"
+                    + "Download from: https://github.com/google/osv-scanner/releases";
             }
             catch (Exception ex)
             {
-                return "Error running osv-scanner: " + ex.Message;
+                output.ErrorText = "Error running osv-scanner: " + ex.Message;
             }
+            return output;
         }
 
         void Log(string message)
