@@ -1,6 +1,8 @@
 # B4JScanner
 
-A Windows desktop tool that scans a [B4J](https://www.b4x.com/b4j.html) project and produces a Software Bill of Materials (SBOM) report. It identifies all library dependencies, resolves their versions, discovers underlying Maven JARs, and can run a vulnerability check via OSV Scanner.
+A Windows desktop tool that scans a [B4J](https://www.b4x.com/b4j.html) project and produces a Software Bill of Materials (SBOM) report. It identifies all library dependencies, resolves their versions, discovers underlying Maven JARs, generates an HTML report, and can run a vulnerability check via OSV Scanner.
+
+![B4JScanner](screenshot.png)
 
 ---
 
@@ -18,7 +20,7 @@ A Windows desktop tool that scans a [B4J](https://www.b4x.com/b4j.html) project 
 build.cmd
 ```
 
-This invokes `csc.exe` from the .NET Framework folder and produces `B4JScanner.exe`. No external dependencies or NuGet packages are required.
+This invokes `csc.exe` directly from the .NET Framework folder and produces `B4JScanner.exe`. No IDE, no `.sln` or `.csproj` files, no NuGet packages, and no external dependencies are required.
 
 ### Running
 
@@ -34,11 +36,20 @@ Double-click `B4JScanner.exe`. The last-used folder paths are saved to `b4jscann
 | Libraries | Path to the main B4J Libraries folder |
 | Add. Libraries | Path to the AdditionalLibraries folder |
 
-Buttons:
+Buttons (left to right):
 
-- **Scan** - runs the full scan and writes the SBOM and Markdown report
-- **Open SBOM** - opens the generated `.cdx.json` file in the default app
-- **OSV Scan** - runs `osv-scanner` against the SBOM to check for known CVEs
+| Button | When enabled | Action |
+|--------|-------------|--------|
+| **Dependency Scan** | Always | Parses the project, resolves all libraries, writes `.cdx.json`, `.md`, and `.html` output files |
+| **OSV Scan** | After Dependency Scan | Runs `osv-scanner` against the SBOM and regenerates the HTML report with vulnerability findings |
+| **Open Report** | After Dependency Scan | Opens the HTML report in the default browser |
+| **Open SBOM** | After Dependency Scan | Opens the raw `.cdx.json` file |
+
+### Typical workflow
+
+1. Select folders and click **Dependency Scan**
+2. Click **Open Report** to view the HTML report immediately
+3. Optionally click **OSV Scan** to add vulnerability data, then refresh the browser
 
 ---
 
@@ -70,7 +81,7 @@ All `.bas` files under the project folder are also scanned for `#AdditionalJar:`
 #AdditionalJar: bcprov-jdk18on-1.80
 ```
 
-These are treated the same as regular libraries for resolution and version extraction.
+These are treated the same as regular libraries for resolution and version extraction, and appear in the report with an **AJ** badge.
 
 ---
 
@@ -103,17 +114,13 @@ Version stripping: `jserver-11.0.21` becomes `jserver` by finding the last `-` w
 Finds any JAR in the directory (or one level of subdirectories) whose filename starts with the library name.
 
 ```
-Libraries\HikariCP-2.4.6.jar             <- matches "hikaricp"
-Libraries\commons-codec\commons-codec-1.16.1.jar  <- matches "commons-codec"
+Libraries\HikariCP-2.4.6.jar                          <- matches "hikaricp"
+Libraries\commons-codec\commons-codec-1.16.1.jar      <- matches "commons-codec"
 ```
 
 ### B4XLib fallback
 
 If no JAR is found, B4JScanner looks for `{name}.b4xlib` in both directories.
-
-### #AdditionalJar resolution
-
-Additional JARs declared with `#AdditionalJar:` go through the same three strategies above. The name in the directive does not include the `.jar` extension.
 
 ---
 
@@ -149,7 +156,7 @@ Also extracts `Implementation-Vendor`, `Implementation-Title`, and `Bundle-Descr
 Extracts a version segment from the JAR filename using the pattern `[-_](\d+[\.\d]*\w*)`:
 
 ```
-HikariCP-2.4.6.jar    -> 2.4.6
+HikariCP-2.4.6.jar            -> 2.4.6
 sqlite-jdbc-3.51.0.0_min.jar  -> 3.51.0.0_min
 ```
 
@@ -213,13 +220,28 @@ The following namespaces are filtered out as they are B4J framework or standard 
 - `javax.*`
 - `android.*`
 
-The remaining imports are collapsed to their two-segment prefix (e.g. `com.zaxxer`, `org.eclipse`) and listed in the SBOM and Markdown report as external references. This gives visibility into third-party Java packages used directly in any custom Java code in the project.
+The remaining imports are collapsed to their two-segment prefix (e.g. `com.zaxxer`, `org.eclipse`) and listed in the SBOM and HTML report as external references. This gives visibility into third-party Java packages used directly in any custom Java code in the project.
 
 ---
 
 ## Output Files
 
-Both files are written to the project folder.
+All three files are written to the project folder after a Dependency Scan.
+
+### `{ProjectName}.html`
+
+A self-contained HTML report viewable in any browser.
+
+![HTML Report](report.png)
+
+Sections:
+
+- Summary cards (Libraries, Found, Not Found, Maven Deps, Vulnerabilities)
+- Project info
+- B4J Libraries table with version, type (B4J or AJ), Maven coords, dependency count, and Found/Missing status
+- Maven Dependencies table with PURLs
+- Vulnerabilities (populated after running OSV Scan)
+- Java import prefixes
 
 ### `{ProjectName}.cdx.json`
 
@@ -244,30 +266,26 @@ B4J-specific properties on each component:
 
 ### `{ProjectName}.md`
 
-A Markdown report with:
-
-- Project info table
-- Summary counts (libraries found/not found, Maven dependencies, Java source files)
-- B4J Libraries table with version, Maven coords, and dependency count
-- Maven Dependencies table sorted by group/artifact with full PURLs
-- Java import prefixes found in generated source
+A Markdown report with the same content as the HTML report (without vulnerability data).
 
 ---
 
 ## Vulnerability Scanning
 
-Click **OSV Scan** after a successful scan. B4JScanner looks for `osv-scanner` in this order:
+Click **OSV Scan** after a Dependency Scan. B4JScanner looks for `osv-scanner` in this order:
 
 1. Any file matching `osv-scanner*` in the same folder as `B4JScanner.exe`
 2. `osv-scanner` on the system PATH
 
-The scanner is invoked as:
+The scanner is invoked with JSON output so results can be embedded in the HTML report:
 
 ```
-osv-scanner -L "{ProjectName}.cdx.json"
+osv-scanner --format json -L "{ProjectName}.cdx.json"
 ```
 
 The file must have the `.cdx.json` extension (required by osv-scanner). Download osv-scanner from [https://github.com/google/osv-scanner/releases](https://github.com/google/osv-scanner/releases) and place the `.exe` next to `B4JScanner.exe`.
+
+After the scan completes, the HTML report is regenerated with a structured vulnerability table showing severity badges (CRITICAL, HIGH, MEDIUM, LOW) for each affected package. Refresh the browser to see the updated report.
 
 ---
 
