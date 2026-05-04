@@ -164,11 +164,11 @@ namespace B4JScanner
                 {
                     if (pkg.Vulns.Count == 0) continue;
                     sb.AppendLine("<table style=\"margin-bottom:14px\">");
-                    sb.AppendLine("<thead><tr><th colspan=\"4\">"
+                    sb.AppendLine("<thead><tr><th colspan=\"5\">"
                         + H(pkg.PackageName)
                         + "&nbsp;<code>" + H(pkg.Version ?? "") + "</code>"
                         + "</th></tr>"
-                        + "<tr><th>ID</th><th>Aliases</th><th>Severity</th><th>Summary</th></tr>"
+                        + "<tr><th>ID</th><th>Aliases</th><th>Severity</th><th>Fix Version</th><th>Summary</th></tr>"
                         + "</thead><tbody>");
                     foreach (var v in pkg.Vulns)
                     {
@@ -177,10 +177,14 @@ namespace B4JScanner
                         string aliases = v.Aliases.Count > 0
                             ? "<code>" + H(string.Join(", ", v.Aliases.ToArray())) + "</code>"
                             : "<span class=\"dim\">-</span>";
+                        string fixVer = !string.IsNullOrEmpty(v.FixedVersion)
+                            ? "<code class=\"fix-ver\">" + H(v.FixedVersion) + "</code>"
+                            : "<span class=\"dim\">-</span>";
                         sb.AppendLine("<tr>"
                             + "<td><code>" + H(v.Id) + "</code></td>"
                             + "<td>" + aliases + "</td>"
                             + "<td>" + sevBadge + "</td>"
+                            + "<td>" + fixVer + "</td>"
                             + "<td>" + H(v.Summary ?? "") + "</td>"
                             + "</tr>");
                     }
@@ -312,6 +316,7 @@ tr:last-child td,tr:last-child th{border-bottom:none}
 .bge.unknown{background:#f1f5f9;color:#64748b}
 code{background:#f1f5f9;padding:1px 6px;border-radius:3px;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#0f172a}
 code.purl{font-size:11px;color:#475569;word-break:break-all}
+code.fix-ver{background:#dcfce7;color:#166534;font-weight:600}
 .dim{color:#94a3b8}
 .notice{padding:13px 18px;border-radius:8px;font-size:13px;border:1px solid}
 .notice.none-found{background:#f0fdf4;border-color:#86efac;color:#166534}
