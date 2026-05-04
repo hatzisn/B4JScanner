@@ -85,4 +85,41 @@ namespace B4JScanner
             Imports = new List<string>();
         }
     }
+
+    class OsvPackageResult
+    {
+        public string PackageName { get; set; }
+        public string Version { get; set; }
+        public string Ecosystem { get; set; }
+        public List<OsvVuln> Vulns { get; set; }
+
+        public OsvPackageResult()
+        {
+            Vulns = new List<OsvVuln>();
+        }
+    }
+
+    class OsvVuln
+    {
+        public string Id { get; set; }
+        public string Summary { get; set; }
+        public string Severity { get; set; }
+        public List<string> Aliases { get; set; }
+
+        public OsvVuln()
+        {
+            Aliases = new List<string>();
+        }
+    }
+
+    class OsvScanOutput
+    {
+        public List<OsvPackageResult> Packages { get; set; }
+        public string ErrorText { get; set; }
+
+        public OsvScanOutput()
+        {
+            Packages = new List<OsvPackageResult>();
+        }
+    }
 }
