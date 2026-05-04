@@ -401,6 +401,7 @@ namespace B4JScanner
                     foreach (var v in p.Vulns)
                         Log("    " + (v.Id ?? "?").PadRight(20)
                             + " [" + (v.Severity ?? "?") + "]"
+                            + (v.FixedVersion != null ? "  fix: " + v.FixedVersion : "")
                             + (v.Summary != null ? "  " + v.Summary : ""));
                 }
             }
