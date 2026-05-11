@@ -226,7 +226,24 @@ namespace B4JScanner
                 return;
             }
 
+            // First-use: ask permission to query Maven Central
+            if (!_config.MavenSearchEnabled.HasValue)
+            {
+                var ans = MessageBox.Show(
+                    "B4JScanner can query Maven Central (search.maven.org) to identify JAR files " +
+                    "that don't include embedded Maven metadata.\n\n" +
+                    "This sends the JAR filename and a file checksum to search.maven.org.\n\n" +
+                    "Allow Maven Central lookups?",
+                    "Maven Central Lookup",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                _config.MavenSearchEnabled = (ans == DialogResult.Yes);
+                try { _config.Save(); } catch { }
+            }
+            JarAnalyzer.MavenSearchEnabled = _config.MavenSearchEnabled.GetValueOrDefault(false);
+
             txtLog.Clear();
+            Log("Maven Central lookup: " + (JarAnalyzer.MavenSearchEnabled ? "enabled" : "disabled"));
             btnScan.Enabled       = false;
             btnOpenSbom.Enabled   = false;
             btnOpenReport.Enabled = false;
@@ -242,7 +259,7 @@ namespace B4JScanner
             try
             {
                 Log("Parsing project: " + projectPath);
-                var project = B4JProjectParser.Parse(projectPath);
+                var project = B4JProjectParser.Parse(projectPath, libsPath, addLibsPath);
                 Log("  Name: "      + project.Name
                   + "  Version: "   + (project.Version ?? "?")
                   + "  Libraries: " + project.Libraries.Count
