@@ -72,16 +72,49 @@ The `.b4j` file is plain text. B4JScanner reads it in two passes.
 
 Scans every line for `#AdditionalJar:` compiler directives.
 
-### Step 2 - Scan .bas Module Files
+### Step 2 - Expand B4XLib Dependencies
+
+When a `Library{n}=` entry resolves to a `.b4xlib` file, B4JScanner opens the ZIP and reads its `manifest.txt` for a `DependsOn=` line:
+
+```
+DependsOn=B4XCollections, jPOI, JavaObject, poi-ooxml-lite-5.0.0, jShell
+```
+
+Each dependency is added to the library list and recursively expanded if it is itself a `.b4xlib`. A `HashSet` prevents duplicate entries and infinite loops in circular dependency chains.
+
+### Step 3 - Scan .bas Module Files
 
 All `.bas` files under the project folder are also scanned for `#AdditionalJar:` directives. Duplicates across all files are removed.
 
 ```
 #AdditionalJar: sqlite-jdbc-3.51.0.0_min
-#AdditionalJar: bcprov-jdk18on-1.80
+#AdditionalJar: h2-2.4.240
 ```
 
-These are treated the same as regular libraries for resolution and version extraction, and appear in the report with an **AJ** badge.
+---
+
+## Library Types
+
+The HTML and Markdown reports split libraries into two tables.
+
+### B4X Libraries table
+
+Contains libraries that were declared via `Library{n}=` in the project file and resolved to a known B4X file type:
+
+| Type badge | Description |
+|-----------|-------------|
+| **B4X Jar** | Has a `.jar` plus a `.xml` sidecar descriptor. This is the standard form for B4J wrapper libraries added via the IDE. |
+| **b4xlib** | Resolved to a `.b4xlib` ZIP file. Contains B4J source code and a manifest with version and dependency info. |
+
+### Maven Dependencies table
+
+Contains the underlying Java JARs that are not B4X wrappers:
+
+| Source badge | Description |
+|-------------|-------------|
+| **b4xlib dep** | A native Java JAR listed in a b4xlib `DependsOn=` and expanded at parse time (e.g. `poi-ooxml-lite-5.0.0` from XLUtils). |
+| **AJ** | A JAR declared via `#AdditionalJar:` in source code. |
+| **B4X dep** | A JAR listed in a B4X Jar's XML `<dependsOn>` element. |
 
 ---
 
@@ -126,9 +159,9 @@ If no JAR is found, B4JScanner looks for `{name}.b4xlib` in both directories.
 
 ## How Versions Are Extracted
 
-Once a JAR is located, version information is extracted using these sources in priority order:
+Once a library is located, version information is extracted using these sources in priority order:
 
-### 1. B4J XML Sidecar
+### 1. B4J XML Sidecar (B4X Jar)
 
 Every B4J wrapper library ships a `.xml` file alongside its JAR. B4JScanner reads the `<version>` child element from the XML root:
 
@@ -139,9 +172,16 @@ Every B4J wrapper library ships a `.xml` file alongside its JAR. B4JScanner read
 </root>
 ```
 
-This is the most reliable source for B4J wrapper libraries.
+### 2. B4XLib Manifest
 
-### 2. JAR MANIFEST.MF
+For `.b4xlib` files, reads `manifest.txt` from inside the ZIP:
+
+```
+Version=1.11
+DependsOn=B4XCollections, jPOI, poi-ooxml-lite-5.0.0
+```
+
+### 3. JAR MANIFEST.MF
 
 Opens the JAR as a ZIP and reads `META-INF/MANIFEST.MF`. Checks these keys in order:
 
@@ -149,9 +189,7 @@ Opens the JAR as a ZIP and reads `META-INF/MANIFEST.MF`. Checks these keys in or
 - `Bundle-Version`
 - `Specification-Version`
 
-Also extracts `Implementation-Vendor`, `Implementation-Title`, and `Bundle-Description` for metadata.
-
-### 3. JAR Filename
+### 4. JAR Filename
 
 Extracts a version segment from the JAR filename using the pattern `[-_](\d+[\.\d]*\w*)`:
 
@@ -160,7 +198,7 @@ HikariCP-2.4.6.jar            -> 2.4.6
 sqlite-jdbc-3.51.0.0_min.jar  -> 3.51.0.0_min
 ```
 
-### 4. Library Name
+### 5. Library Name
 
 If the library name itself contains a version suffix (same pattern), that is used:
 
@@ -172,7 +210,11 @@ jserver-11.0.21  -> 11.0.21
 
 ## How Maven Coordinates Are Identified
 
-Real Maven coordinates (group ID, artifact ID, version) are read from `META-INF/maven/*/pom.properties` inside the JAR. Example entry:
+Maven coordinates (group ID, artifact ID, version) are resolved using up to four methods in order:
+
+### 1. Embedded `pom.properties` (local)
+
+Reads `META-INF/maven/*/pom.properties` from inside the JAR. Available in JARs downloaded directly from Maven Central.
 
 ```properties
 groupId=com.zaxxer
@@ -180,13 +222,32 @@ artifactId=HikariCP
 version=5.1.0
 ```
 
-These produce a proper PURL: `pkg:maven/com.zaxxer/HikariCP@5.1.0`
+### 2. OSGi Bundle-SymbolicName (local)
 
-If no `pom.properties` is found, the component is labelled as a B4J wrapper: `pkg:maven/b4j/{name}@{version}`
+Reads `Bundle-SymbolicName` from `META-INF/MANIFEST.MF`. For many well-known OSGi-bundled libraries this equals the Maven group ID. The artifact ID is derived from the JAR filename.
+
+```
+Bundle-SymbolicName: com.h2database   -> groupId = com.h2database
+Filename: h2-2.4.240.jar              -> artifactId = h2
+```
+
+This handles JARs from binary distributions (e.g. H2 Database) that do not include `pom.properties`.
+
+### 3. Maven Central name search (network, optional)
+
+Queries `search.maven.org` with the artifact ID and version derived from the filename. Only accepted when exactly one result is returned (unambiguous match). If multiple publishers have released an artifact with the same name and version, this step is skipped and the SHA1 lookup is tried instead.
+
+### 4. SHA1 fingerprint (network, last resort)
+
+Computes a SHA1 hash of the JAR file and queries Maven Central's checksum lookup. This is the most reliable method for binary-distribution JARs (e.g. Apache POI) where neither `pom.properties` nor `Bundle-SymbolicName` is available, and where the name search is ambiguous.
+
+If the name search found multiple candidates but the SHA1 lookup also fails (e.g. offline), the PURL column shows `ambiguous: N matches on Maven Central`. If a network error occurs, the error message is shown in place of the PURL.
+
+Network lookups are **opt-in**: on the first scan, B4JScanner asks for confirmation before connecting to `search.maven.org`. The answer is saved in `b4jscanner.cfg.json`.
 
 ---
 
-## How Underlying Dependencies Are Resolved
+## How Underlying B4X JAR Dependencies Are Resolved
 
 The B4J XML sidecar can declare underlying JAR dependencies via `<dependsOn>` elements:
 
@@ -200,7 +261,7 @@ For each dependency B4JScanner:
 1. Constructs the expected path (e.g. `Libraries\jserver-11.0.21\jetty-server-11.0.21.jar`)
 2. Falls back to a flat filename search in the root of each library directory
 3. Reads `pom.properties` from inside the found JAR to get real Maven coordinates
-4. Adds the dependency as a separate SBOM component with a `pkg:maven` PURL
+4. Adds the dependency to the Maven Dependencies table with a `pkg:maven` PURL
 
 Dependencies are deduplicated by PURL across all libraries.
 
@@ -220,7 +281,7 @@ The following namespaces are filtered out as they are B4J framework or standard 
 - `javax.*`
 - `android.*`
 
-The remaining imports are collapsed to their two-segment prefix (e.g. `com.zaxxer`, `org.eclipse`) and listed in the SBOM and HTML report as external references. This gives visibility into third-party Java packages used directly in any custom Java code in the project.
+The remaining imports are collapsed to their two-segment prefix (e.g. `com.zaxxer`, `org.eclipse`) and listed in the SBOM and HTML report as external references.
 
 ---
 
@@ -236,11 +297,11 @@ A self-contained HTML report viewable in any browser.
 
 Sections:
 
-- Summary cards (Libraries, Found, Not Found, Maven Deps, Vulnerabilities)
+- Summary cards (B4X Libraries, Found, Not Found, Maven Deps, Vulnerabilities)
 - Project info
-- B4J Libraries table with version, type (B4J or AJ), Maven coords, dependency count, and Found/Missing status
-- Maven Dependencies table with PURLs
-- Vulnerabilities (populated after running OSV Scan)
+- **B4X Libraries** table: B4X Jar and b4xlib entries with version, type badge, dependency count, and Found/Missing status
+- **Maven Dependencies** table: native JARs from b4xlib expansion, `#AdditionalJar` entries, and B4X `<dependsOn>` deps, each with group ID, artifact ID, version, source badge, and PURL
+- Vulnerabilities with severity badges and fix versions (populated after OSV Scan)
 - Java import prefixes
 
 ### `{ProjectName}.cdx.json`
@@ -248,7 +309,7 @@ Sections:
 A [CycloneDX 1.5](https://cyclonedx.org/specification/overview/) JSON SBOM. Contains:
 
 - Project metadata (name, version, Java package)
-- One component per B4J library with PURL, version, vendor, and B4J-specific properties
+- One component per library with PURL, version, and B4J-specific properties
 - One component per resolved Maven dependency (deduplicated)
 - External references for Java import prefixes found in `Objects/src`
 
@@ -261,7 +322,7 @@ B4J-specific properties on each component:
 | `b4j:jarPath` | Absolute path to the resolved JAR |
 | `b4j:xmlPath` | Absolute path to the sidecar XML (if found) |
 | `b4j:b4xlibPath` | Absolute path to the .b4xlib (if used) |
-| `b4j:versionSource` | Where the version came from (`xml`, `manifest:*`, `filename`, `library-name`) |
+| `b4j:versionSource` | Where the version came from (`xml`, `b4xlib-manifest`, `manifest:*`, `filename`, `library-name`) |
 | `b4j:dependsOn` | Repeated for each underlying dependency name |
 
 ### `{ProjectName}.md`
@@ -285,18 +346,28 @@ osv-scanner --format json -L "{ProjectName}.cdx.json"
 
 The file must have the `.cdx.json` extension (required by osv-scanner). Download osv-scanner from [https://github.com/google/osv-scanner/releases](https://github.com/google/osv-scanner/releases) and place the `.exe` next to `B4JScanner.exe`.
 
-After the scan completes, the HTML report is regenerated with a structured vulnerability table showing severity badges (CRITICAL, HIGH, MEDIUM, LOW) for each affected package. Refresh the browser to see the updated report.
+After the scan completes, the HTML report is regenerated with a structured vulnerability table showing severity badges (CRITICAL, HIGH, MEDIUM, LOW), CVE aliases, and the recommended fix version for each finding. Refresh the browser to see the updated report.
 
 ---
 
 ## Configuration File
 
-`b4jscanner.cfg.json` is saved next to `B4JScanner.exe` automatically. It stores the last-used folder paths so they are pre-filled on next launch.
+`b4jscanner.cfg.json` is saved next to `B4JScanner.exe` automatically.
 
 ```json
 {
   "projectFolder": "D:\\Projects\\MyApp",
   "librariesPath": "C:\\Apps\\B4J\\Libraries",
-  "additionalLibrariesPath": "C:\\Apps\\B4J\\AdditionalLibraries"
+  "additionalLibrariesPath": "C:\\Apps\\B4J\\AdditionalLibraries",
+  "mavenSearchEnabled": true
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `projectFolder` | Last-used B4J project path, pre-filled on next launch |
+| `librariesPath` | Path to the main B4J Libraries folder |
+| `additionalLibrariesPath` | Path to the AdditionalLibraries folder |
+| `mavenSearchEnabled` | `true` to allow queries to `search.maven.org`, `false` to disable, `null` (or absent) to be prompted on the next scan |
+
+To reset the Maven Central consent, set `mavenSearchEnabled` to `null` or remove the field from the file.
