@@ -57,11 +57,13 @@ namespace B4JScanner
         public string GroupId { get; set; }
         public string ArtifactId { get; set; }
         public string Version { get; set; }
+        public string Note { get; set; }  // set when coords are partial/ambiguous
 
         public string ToPurl()
         {
-            return "pkg:maven/" + Uri.EscapeDataString(GroupId ?? "unknown")
-                 + "/" + Uri.EscapeDataString(ArtifactId ?? "unknown")
+            if (GroupId == null || ArtifactId == null) return null;
+            return "pkg:maven/" + Uri.EscapeDataString(GroupId)
+                 + "/" + Uri.EscapeDataString(ArtifactId)
                  + "@" + Uri.EscapeDataString(Version ?? "unknown");
         }
     }
