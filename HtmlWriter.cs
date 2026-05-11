@@ -13,21 +13,33 @@ namespace B4JScanner
             List<JavaSourceFile> javaFiles, string outputPath,
             List<OsvPackageResult> osvResults = null)
         {
-            int found = 0, notFound = 0;
+            int b4xFound = 0, b4xNotFound = 0;
+            var b4xLibs  = new List<ResolvedLibrary>();
+            var javaDeps = new List<ResolvedLibrary>();
             var mavenDeps = new List<ResolvedDependency>();
             var seenPurls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var lib in libraries)
             {
-                if (lib.Found) found++; else notFound++;
+                if (!IsB4X(lib))
+                {
+                    javaDeps.Add(lib);
+                    continue;
+                }
+                b4xLibs.Add(lib);
+                if (lib.Found) b4xFound++; else b4xNotFound++;
                 if (lib.Info == null) continue;
                 foreach (var dep in lib.Info.ResolvedDeps)
                 {
                     if (dep.Maven == null) continue;
-                    if (seenPurls.Add(dep.Maven.ToPurl()))
+                    string depPurl = dep.Maven.ToPurl();
+                    if (depPurl == null) continue;
+                    if (seenPurls.Add(depPurl))
                         mavenDeps.Add(dep);
                 }
             }
+
+            int totalMavenDeps = javaDeps.Count + mavenDeps.Count;
 
             int totalVulns = 0;
             string worstSev = null;
@@ -64,11 +76,11 @@ namespace B4JScanner
 
             // Summary cards
             sb.AppendLine("<div class=\"cards\">");
-            sb.AppendLine(Card("blue",  libraries.Count.ToString(), "Libraries"));
-            sb.AppendLine(Card("green", found.ToString(),           "Found"));
-            if (notFound > 0)
-                sb.AppendLine(Card("red", notFound.ToString(), "Not Found"));
-            sb.AppendLine(Card("blue", mavenDeps.Count.ToString(), "Maven Deps"));
+            sb.AppendLine(Card("blue",  b4xLibs.Count.ToString(),  "B4X Libraries"));
+            sb.AppendLine(Card("green", b4xFound.ToString(),        "Found"));
+            if (b4xNotFound > 0)
+                sb.AppendLine(Card("red", b4xNotFound.ToString(), "Not Found"));
+            sb.AppendLine(Card("blue", totalMavenDeps.ToString(), "Maven Deps"));
             if (osvResults == null)
                 sb.AppendLine(Card("gray",  "?",                    "Vulnerabilities"));
             else if (totalVulns == 0)
@@ -87,25 +99,22 @@ namespace B4JScanner
             sb.AppendLine(InfoRow("B4J File", project.ProjectFile));
             sb.AppendLine("</tbody></table>");
 
-            // Libraries
-            sb.AppendLine("<h2>B4J Libraries</h2>");
+            // B4X Libraries
+            sb.AppendLine("<h2>B4X Libraries</h2>");
             sb.AppendLine("<table>");
             sb.AppendLine("<thead><tr>"
                 + "<th>Library</th><th>Version</th><th>Type</th>"
-                + "<th>Maven Coords</th><th style=\"text-align:right\">Deps</th><th>Status</th>"
+                + "<th style=\"text-align:right\">Deps</th><th>Status</th>"
                 + "</tr></thead>");
             sb.AppendLine("<tbody>");
-            foreach (var lib in libraries)
+            foreach (var lib in b4xLibs)
             {
                 var info = lib.Info;
                 string ver   = info != null && !string.IsNullOrEmpty(info.Version) ? info.Version : "unknown";
-                string maven = info != null && info.Maven != null
-                    ? "<code>" + H(info.Maven.GroupId) + ":" + H(info.Maven.ArtifactId) + "</code>"
-                    : "<span class=\"dim\">-</span>";
                 int depCount  = info != null ? info.ResolvedDeps.Count : 0;
-                string typeTag = lib.IsAdditionalJar
-                    ? "<span class=\"bge aj\">AJ</span>"
-                    : "<span class=\"dim\">B4J</span>";
+                string typeTag = lib.XmlPath != null
+                    ? "<span class=\"bge b4xjar\">B4X Jar</span>"
+                    : "<span class=\"bge b4xlib\">b4xlib</span>";
                 string statusTag = lib.Found
                     ? "<span class=\"bge ok\">Found</span>"
                     : "<span class=\"bge miss\">Missing</span>";
@@ -114,7 +123,6 @@ namespace B4JScanner
                     + "<td>" + H(lib.LibraryName) + "</td>"
                     + "<td><code>" + H(ver) + "</code></td>"
                     + "<td>" + typeTag + "</td>"
-                    + "<td>" + maven + "</td>"
                     + "<td style=\"text-align:right\">" + (depCount > 0 ? depCount.ToString() : "-") + "</td>"
                     + "<td>" + statusTag + "</td>"
                     + "</tr>");
@@ -122,7 +130,7 @@ namespace B4JScanner
             sb.AppendLine("</tbody></table>");
 
             // Maven dependencies
-            if (mavenDeps.Count > 0)
+            if (totalMavenDeps > 0)
             {
                 mavenDeps.Sort((a, b) =>
                 {
@@ -132,14 +140,52 @@ namespace B4JScanner
 
                 sb.AppendLine("<h2>Maven Dependencies</h2>");
                 sb.AppendLine("<table>");
-                sb.AppendLine("<thead><tr><th>Group ID</th><th>Artifact ID</th><th>Version</th><th>PURL</th></tr></thead>");
+                sb.AppendLine("<thead><tr>"
+                    + "<th>Name</th><th>Group ID</th><th>Artifact ID</th>"
+                    + "<th>Version</th><th>Source</th><th>PURL</th>"
+                    + "</tr></thead>");
                 sb.AppendLine("<tbody>");
+
+                // Native JARs (from b4xlib DependsOn expansion) and AdditionalJar entries
+                foreach (var lib in javaDeps)
+                {
+                    var info = lib.Info;
+                    string ver  = info != null && !string.IsNullOrEmpty(info.Version) ? info.Version : "unknown";
+                    bool hasCoords = info != null && info.Maven != null && info.Maven.GroupId != null;
+                    string gId  = hasCoords
+                        ? "<code>" + H(info.Maven.GroupId)    + "</code>"
+                        : "<span class=\"dim\">-</span>";
+                    string aId  = hasCoords
+                        ? "<code>" + H(info.Maven.ArtifactId) + "</code>"
+                        : "<span class=\"dim\">-</span>";
+                    string javaPurl = hasCoords
+                        ? "<code class=\"purl\">" + H(info.Maven.ToPurl()) + "</code>"
+                        : (info != null && info.Maven != null && info.Maven.Note != null)
+                            ? "<span class=\"maven-note\">" + H(info.Maven.Note) + "</span>"
+                            : "<span class=\"dim\">-</span>";
+                    string srcTag = lib.IsAdditionalJar
+                        ? "<span class=\"bge aj\">AJ</span>"
+                        : "<span class=\"bge b4xdep\">b4xlib dep</span>";
+
+                    sb.AppendLine("<tr>"
+                        + "<td>" + H(lib.LibraryName) + "</td>"
+                        + "<td>" + gId  + "</td>"
+                        + "<td>" + aId  + "</td>"
+                        + "<td><code>" + H(ver) + "</code></td>"
+                        + "<td>" + srcTag + "</td>"
+                        + "<td>" + javaPurl + "</td>"
+                        + "</tr>");
+                }
+
+                // ResolvedDeps from B4X Jar <dependsOn> XML entries
                 foreach (var dep in mavenDeps)
                 {
                     sb.AppendLine("<tr>"
-                        + "<td><code>" + H(dep.Maven.GroupId)             + "</code></td>"
-                        + "<td><code>" + H(dep.Maven.ArtifactId)          + "</code></td>"
-                        + "<td><code>" + H(dep.Maven.Version ?? "unknown") + "</code></td>"
+                        + "<td>" + H(dep.Name) + "</td>"
+                        + "<td><code>" + H(dep.Maven.GroupId)              + "</code></td>"
+                        + "<td><code>" + H(dep.Maven.ArtifactId)           + "</code></td>"
+                        + "<td><code>" + H(dep.Maven.Version ?? "unknown")  + "</code></td>"
+                        + "<td><span class=\"bge b4xdep\">B4X dep</span></td>"
                         + "<td><code class=\"purl\">" + H(dep.Maven.ToPurl()) + "</code></td>"
                         + "</tr>");
                 }
@@ -213,6 +259,11 @@ namespace B4JScanner
         }
 
         // --- Helpers ---
+
+        static bool IsB4X(ResolvedLibrary lib)
+        {
+            return lib.XmlPath != null || lib.B4xlibPath != null;
+        }
 
         static string Card(string colorClass, string val, string label)
         {
@@ -309,6 +360,9 @@ tr:last-child td,tr:last-child th{border-bottom:none}
 .bge.ok{background:#dcfce7;color:#166534}
 .bge.miss{background:#fee2e2;color:#991b1b}
 .bge.aj{background:#dbeafe;color:#1e40af}
+.bge.b4xjar{background:#ede9fe;color:#5b21b6}
+.bge.b4xlib{background:#fce7f3;color:#9d174d}
+.bge.b4xdep{background:#e0f2fe;color:#075985}
 .bge.critical{background:#ede9fe;color:#5b21b6}
 .bge.high{background:#fee2e2;color:#991b1b}
 .bge.medium{background:#fef3c7;color:#92400e}
@@ -318,6 +372,7 @@ code{background:#f1f5f9;padding:1px 6px;border-radius:3px;font-family:ui-monospa
 code.purl{font-size:11px;color:#475569;word-break:break-all}
 code.fix-ver{background:#dcfce7;color:#166534;font-weight:600}
 .dim{color:#94a3b8}
+.maven-note{color:#b45309;font-style:italic;font-size:12px}
 .notice{padding:13px 18px;border-radius:8px;font-size:13px;border:1px solid}
 .notice.none-found{background:#f0fdf4;border-color:#86efac;color:#166534}
 .notice.not-scanned{background:#f8fafc;border-color:#cbd5e1;color:#64748b}
