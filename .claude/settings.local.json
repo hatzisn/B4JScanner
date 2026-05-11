@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Dropbox\\\\My Apps\\\\DotNet\\\\B4JScanner\\\\\" -Recurse -Filter \"*.cs\" | Select-Object -ExpandProperty FullName | Sort-Object)",
+      "PowerShell(Stop-Process -Name \"B4JScanner\" -ErrorAction SilentlyContinue)",
+      "PowerShell(& \"d:\\\\Dropbox\\\\My Apps\\\\DotNet\\\\B4JScanner\\\\build.cmd\" 2>&1)"
+    ]
+  }
+}
