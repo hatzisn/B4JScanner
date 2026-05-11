@@ -78,7 +78,7 @@ namespace B4JScanner
             return null;
         }
 
-        static string FindFile(string fileName, string directory)
+        public static string FindFile(string fileName, string directory)
         {
             if (!Directory.Exists(directory)) return null;
             try
