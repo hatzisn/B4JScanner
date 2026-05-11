@@ -12,14 +12,21 @@ namespace B4JScanner
         public static string Write(B4JProject project, List<ResolvedLibrary> libraries,
             List<JavaSourceFile> javaFiles, string outputPath)
         {
-            // Count totals
-            int found = 0, notFound = 0;
+            int b4xFound = 0, b4xNotFound = 0;
+            var b4xLibs   = new List<ResolvedLibrary>();
+            var javaDeps  = new List<ResolvedLibrary>();
             var mavenDeps = new List<ResolvedDependency>();
             var seenPurls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var lib in libraries)
             {
-                if (lib.Found) found++; else notFound++;
+                if (!IsB4X(lib))
+                {
+                    javaDeps.Add(lib);
+                    continue;
+                }
+                b4xLibs.Add(lib);
+                if (lib.Found) b4xFound++; else b4xNotFound++;
                 if (lib.Info == null) continue;
                 foreach (var dep in lib.Info.ResolvedDeps)
                 {
@@ -28,6 +35,8 @@ namespace B4JScanner
                         mavenDeps.Add(dep);
                 }
             }
+
+            int totalMavenDeps = javaDeps.Count + mavenDeps.Count;
 
             var sb = new StringBuilder();
 
@@ -55,51 +64,69 @@ namespace B4JScanner
             sb.AppendLine();
             sb.AppendLine("| | Count |");
             sb.AppendLine("|---|------:|");
-            sb.AppendLine("| B4J libraries | " + libraries.Count + " |");
-            sb.AppendLine("| Found | " + found + " |");
-            if (notFound > 0)
-                sb.AppendLine("| **Not found** | **" + notFound + "** |");
-            sb.AppendLine("| Maven dependencies identified | " + mavenDeps.Count + " |");
+            sb.AppendLine("| B4X libraries | " + b4xLibs.Count + " |");
+            sb.AppendLine("| Found | " + b4xFound + " |");
+            if (b4xNotFound > 0)
+                sb.AppendLine("| **Not found** | **" + b4xNotFound + "** |");
+            sb.AppendLine("| Maven dependencies | " + totalMavenDeps + " |");
             sb.AppendLine("| Java source files scanned | " + javaFiles.Count + " |");
             sb.AppendLine();
 
-            // B4J libraries table
-            sb.AppendLine("## B4J Libraries");
+            // B4X Libraries table
+            sb.AppendLine("## B4X Libraries");
             sb.AppendLine();
-            sb.AppendLine("| Library | Version | Maven Coords | Deps |");
-            sb.AppendLine("|---------|---------|--------------|-----:|");
+            sb.AppendLine("| Library | Type | Version | Deps |");
+            sb.AppendLine("|---------|------|---------|-----:|");
 
-            foreach (var lib in libraries)
+            foreach (var lib in b4xLibs)
             {
+                string typeLabel = lib.XmlPath != null ? "B4X Jar" : "b4xlib";
                 string status = lib.Found ? "" : " ⚠";
-                if (lib.IsAdditionalJar) status = " `[AJ]`" + status;
                 var info = lib.Info;
-                string ver  = info != null && !string.IsNullOrEmpty(info.Version) ? info.Version : "unknown";
-                string maven = info != null && info.Maven != null
-                    ? "`" + info.Maven.GroupId + ":" + info.Maven.ArtifactId + "`"
-                    : "-";
+                string ver   = info != null && !string.IsNullOrEmpty(info.Version) ? info.Version : "unknown";
                 int depCount = info != null ? info.ResolvedDeps.Count : 0;
                 string deps = depCount > 0 ? depCount.ToString() : "-";
 
                 sb.AppendLine("| " + Md(lib.LibraryName) + status
+                            + " | " + typeLabel
                             + " | " + Md(ver)
-                            + " | " + maven
                             + " | " + deps + " |");
             }
             sb.AppendLine();
 
             // Maven dependencies table
-            if (mavenDeps.Count > 0)
+            if (totalMavenDeps > 0)
             {
                 sb.AppendLine("## Maven Dependencies");
                 sb.AppendLine();
-                sb.AppendLine("These are the underlying Java libraries identified via `<dependsOn>` metadata.");
+                sb.AppendLine("Underlying Java libraries from b4xlib dependencies, `#AdditionalJar` directives, and B4X `<dependsOn>` metadata.");
                 sb.AppendLine("Run OSV Scan to check these for known vulnerabilities.");
                 sb.AppendLine();
-                sb.AppendLine("| Group ID | Artifact ID | Version | PURL |");
-                sb.AppendLine("|----------|-------------|---------|------|");
+                sb.AppendLine("| Name | Group ID | Artifact ID | Version | Source | PURL |");
+                sb.AppendLine("|------|----------|-------------|---------|--------|------|");
 
-                // Sort by groupId then artifactId
+                // Native JARs (from b4xlib DependsOn expansion) and AdditionalJar entries
+                foreach (var lib in javaDeps)
+                {
+                    var info = lib.Info;
+                    string ver  = info != null && !string.IsNullOrEmpty(info.Version) ? info.Version : "unknown";
+                    bool hasCoords = info != null && info.Maven != null && info.Maven.GroupId != null;
+                    string gId  = hasCoords ? "`" + Md(info.Maven.GroupId)    + "`" : "-";
+                    string aId  = hasCoords ? "`" + Md(info.Maven.ArtifactId) + "`" : "-";
+                    string purl = hasCoords ? "`" + info.Maven.ToPurl() + "`"
+                        : (info != null && info.Maven != null && info.Maven.Note != null)
+                            ? Md(info.Maven.Note) : "-";
+                    string src  = lib.IsAdditionalJar ? "AJ" : "b4xlib dep";
+
+                    sb.AppendLine("| " + Md(lib.LibraryName)
+                                + " | " + gId
+                                + " | " + aId
+                                + " | " + Md(ver)
+                                + " | " + src
+                                + " | " + purl + " |");
+                }
+
+                // ResolvedDeps from B4X Jar <dependsOn> XML entries
                 mavenDeps.Sort((a, b) =>
                 {
                     int c = string.Compare(a.Maven.GroupId, b.Maven.GroupId, StringComparison.OrdinalIgnoreCase);
@@ -108,9 +135,11 @@ namespace B4JScanner
 
                 foreach (var dep in mavenDeps)
                 {
-                    sb.AppendLine("| `" + Md(dep.Maven.GroupId)    + "`"
+                    sb.AppendLine("| " + Md(dep.Name)
+                                + " | `" + Md(dep.Maven.GroupId)    + "`"
                                 + " | `" + Md(dep.Maven.ArtifactId) + "`"
                                 + " | " + Md(dep.Maven.Version ?? "unknown")
+                                + " | B4X dep"
                                 + " | `" + dep.Maven.ToPurl() + "` |");
                 }
                 sb.AppendLine();
@@ -131,6 +160,11 @@ namespace B4JScanner
 
             File.WriteAllText(outputPath, sb.ToString(), new UTF8Encoding(false));
             return outputPath;
+        }
+
+        static bool IsB4X(ResolvedLibrary lib)
+        {
+            return lib.XmlPath != null || lib.B4xlibPath != null;
         }
 
         // Escape pipe characters so they don't break Markdown tables
