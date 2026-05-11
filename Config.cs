@@ -10,6 +10,7 @@ namespace B4JScanner
         public string ProjectFolder { get; set; }
         public string LibrariesPath { get; set; }
         public string AdditionalLibrariesPath { get; set; }
+        public bool? MavenSearchEnabled { get; set; }
 
         static string ConfigPath
         {
@@ -44,6 +45,9 @@ namespace B4JScanner
 
                 string addLibs = ReadString(json, "additionalLibrariesPath");
                 if (addLibs != null) cfg.AdditionalLibrariesPath = addLibs;
+
+                bool? maven = ReadBool(json, "mavenSearchEnabled");
+                if (maven.HasValue) cfg.MavenSearchEnabled = maven;
             }
             catch { }
 
@@ -52,28 +56,41 @@ namespace B4JScanner
 
         public void Save()
         {
+            string mavenVal = MavenSearchEnabled.HasValue
+                ? (MavenSearchEnabled.Value ? "true" : "false")
+                : "null";
+
             var sb = new StringBuilder();
             sb.AppendLine("{");
             sb.AppendLine("  \"projectFolder\": "           + Str(ProjectFolder)           + ",");
             sb.AppendLine("  \"librariesPath\": "           + Str(LibrariesPath)           + ",");
-            sb.AppendLine("  \"additionalLibrariesPath\": " + Str(AdditionalLibrariesPath));
+            sb.AppendLine("  \"additionalLibrariesPath\": " + Str(AdditionalLibrariesPath) + ",");
+            sb.AppendLine("  \"mavenSearchEnabled\": "      + mavenVal);
             sb.AppendLine("}");
             File.WriteAllText(ConfigPath, sb.ToString(), Encoding.UTF8);
         }
 
-        // Reads a JSON string value by key using a simple regex (no parser needed for this flat config)
         static string ReadString(string json, string key)
         {
             var m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
             if (!m.Success) return null;
-            // Unescape common sequences
             return m.Groups[1].Value
-                .Replace("\\\\", "\x01")   // temp-protect \\
+                .Replace("\\\\", "\x01")
                 .Replace("\\\"", "\"")
                 .Replace("\\n",  "\n")
                 .Replace("\\r",  "\r")
                 .Replace("\\t",  "\t")
                 .Replace("\x01", "\\");
+        }
+
+        static bool? ReadBool(string json, string key)
+        {
+            var m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*(true|false|null)");
+            if (!m.Success) return null;
+            string val = m.Groups[1].Value;
+            if (val == "true")  return true;
+            if (val == "false") return false;
+            return null;
         }
 
         static string Str(string value)
