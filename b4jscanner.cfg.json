@@ -1,5 +1,6 @@
 ﻿{
-  "projectFolder": "D:\\Dropbox\\My Apps\\B4J\\DataCollectionServer",
+  "projectFolder": "D:\\Dropbox\\My Apps\\B4J\\_Sandbox\\TestScanner",
   "librariesPath": "C:\\Apps\\B4J\\Libraries",
-  "additionalLibrariesPath": "C:\\Apps\\B4J\\AdditionalLibraries"
+  "additionalLibrariesPath": "C:\\Apps\\B4J\\AdditionalLibraries",
+  "mavenSearchEnabled": true
 }
