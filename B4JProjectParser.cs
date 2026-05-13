@@ -93,6 +93,7 @@ namespace B4JScanner
             return project;
         }
 
+
         // Adds libName to the library list and, if it is a b4xlib, recursively
         // expands its DependsOn entries. seenLibs prevents duplicates and cycles.
         static void ExpandLibrary(string libName, string libsPath, string addLibsPath,
