@@ -102,8 +102,12 @@ namespace B4JScanner
 
             libraries.Add(libName);
 
+            string addLibsPathB4J = Path.Combine(addLibsPath, @"b4j");
+            string addLibsPathB4X = Path.Combine(addLibsPath, @"b4x");
+
             string b4xlibPath = LibraryResolver.FindFile(libName + ".b4xlib", libsPath)
-                             ?? LibraryResolver.FindFile(libName + ".b4xlib", addLibsPath);
+                             ?? LibraryResolver.FindFile(libName + ".b4xlib", addLibsPathB4J)
+                             ?? LibraryResolver.FindFile(libName + ".b4xlib", addLibsPathB4X);
             if (b4xlibPath == null) return;
 
             foreach (string dep in ReadB4XLibDeps(b4xlibPath))
