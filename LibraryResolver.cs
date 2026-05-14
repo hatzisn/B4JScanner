@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows.Forms;
 
 namespace B4JScanner
 {
@@ -12,7 +13,7 @@ namespace B4JScanner
             var result = new ResolvedLibrary { LibraryName = libraryName };
 
             // Try JAR + XML in each library directory (multiple strategies per dir)
-            string jar = FindJar(libraryName, libsPath) ?? FindJar(libraryName, addLibsPath);
+            string jar = FindJar(libraryName, libsPath) ?? FindJar(libraryName, Path.Combine(addLibsPath,@"b4j")) ;
 
             if (jar != null)
             {
@@ -25,7 +26,8 @@ namespace B4JScanner
             {
                 // Try B4XLib
                 string b4xlib = FindFile(libraryName + ".b4xlib", libsPath)
-                             ?? FindFile(libraryName + ".b4xlib", addLibsPath);
+                             ?? FindFile(libraryName + ".b4xlib", Path.Combine(addLibsPath, @"b4j")
+                             ?? FindFile(libraryName + ".b4xlib", Path.Combine(addLibsPath, @"b4x")));
                 result.B4xlibPath = b4xlib;
             }
 
@@ -66,6 +68,7 @@ namespace B4JScanner
                 // Also search one level of subdirectories (for jserver/ etc.)
                 foreach (var sub in Directory.GetDirectories(directory))
                 {
+                    Application.DoEvents();
                     var subJars = Directory.GetFiles(sub, "*.jar", SearchOption.TopDirectoryOnly);
                     match = subJars.FirstOrDefault(j =>
                         Path.GetFileNameWithoutExtension(j)
@@ -97,10 +100,11 @@ namespace B4JScanner
                     ? depName : depName + ".jar";
 
                 string found = FindDepJar(jarFile, libsPath)
-                            ?? FindDepJar(jarFile, addLibsPath);
+                            ?? FindDepJar(jarFile, Path.Combine(addLibsPath, @"b4j"));
 
                 var dep = new ResolvedDependency { Name = depName, JarPath = found };
                 if (found != null)
+                    Application.DoEvents();
                     dep.Maven = JarAnalyzer.TryReadMavenCoords(found);
                 info.ResolvedDeps.Add(dep);
             }

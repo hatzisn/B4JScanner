@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
+using System.Windows.Forms;
 
 namespace B4JScanner
 {
@@ -99,6 +100,7 @@ namespace B4JScanner
         static void ExpandLibrary(string libName, string libsPath, string addLibsPath,
             List<string> libraries, HashSet<string> seen)
         {
+            Application.DoEvents(); // Keep UI responsive during potentially long recursion
             if (string.IsNullOrEmpty(libName) || !seen.Add(libName)) return;
 
             libraries.Add(libName);
@@ -131,7 +133,9 @@ namespace B4JScanner
                         string line;
                         while ((line = reader.ReadLine()) != null)
                         {
-                            if (!line.StartsWith("DependsOn=", StringComparison.OrdinalIgnoreCase))
+                            bool isDependsOn = line.Trim().StartsWith("dependson=", StringComparison.OrdinalIgnoreCase)
+                                            || line.Trim().StartsWith("b4j.dependson=", StringComparison.OrdinalIgnoreCase);
+                            if (!isDependsOn)
                                 continue;
 
                             string val = line.Substring(line.IndexOf('=') + 1).Trim();
